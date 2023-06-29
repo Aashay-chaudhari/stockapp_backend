@@ -10,3 +10,5 @@ Version: 2.10.0
 
 Name: yfinance
 Version: 0.2.18
+
+Activate the virtual env using the command : .\venv\Scripts\activate
