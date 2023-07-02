@@ -31,6 +31,8 @@ yf.pdr_override()
 
 # Global variables to be used in this file
 current_time = datetime.now()
+model = tf.keras.models.load_model('my_new_model')
+print("Model is loaded in global")
 
 
 def trainModel_with_new_scaling(request):
@@ -98,102 +100,14 @@ def trainModel_with_new_scaling(request):
     print("Model saved")
 
 
-# #Trains the model on data, and saves the model in my_model
-# def trainModel():
-#     df = pdr.get_data_yahoo("^NSEI", start="1980-02-01", end=current_time.strftime('%Y-%m-%d'))
-#     column_names = ["Open", "High", "Low", "Close", "Adj Close", "Volume"]
-#     df = df.reindex(columns=column_names)
-#     dataframe = df.reset_index()
-#     data = df.filter(['Close'])
-#     dataset = data.values
-#     training_data_len = math.ceil(len(dataset) * .8)
-#     scaler = MinMaxScaler(feature_range=(0, 1))
-#     scaled_data = scaler.fit_transform(dataset)
-#     train_data = scaled_data[0:training_data_len, :]
-#     #Create training data
-#     x_train = []
-#     y_train = []
-#     for i in range(60, len(train_data)):
-#         x_train.append(train_data[i - 60:i, 0])
-#         y_train.append(train_data[i, 0])
-#     x_train, y_train = np.array(x_train), np.array(y_train)
-#     x_train = np.reshape(x_train, (x_train.shape[0], x_train.shape[1], 1))
-#     print(x_train.shape, y_train.shape)
-#
-#     #Create testing data
-#     x_test = []
-#     y_test = []
-#     for i in range(60, len(train_data)):
-#         x_test.append(train_data[i - 60:i, 0])
-#         y_test.append(train_data[i, 0])
-#     x_test, y_test = np.array(x_test), np.array(y_test)
-#     x_test = np.reshape(x_test, (x_test.shape[0], x_test.shape[1], 1))
-#     print(x_test.shape, y_test.shape)
-#     # Describe model architecture
-#
-#     class attention(Layer):
-#         def __init__(self, **kwargs):
-#             super(attention, self).__init__(**kwargs)
-#
-#         def build(self, input_shape):
-#             self.W = self.add_weight(name='attention_weight', shape=(input_shape[-1], 1),
-#                                      initializer='random_normal', trainable=True)
-#             self.b = self.add_weight(name='attention_bias', shape=(input_shape[1], 1),
-#                                      initializer='zeros', trainable=True)
-#             super(attention, self).build(input_shape)
-#
-#         def call(self, x):
-#             # Alignment scores. Pass them through tanh function
-#             e = K.tanh(K.dot(x, self.W) + self.b)
-#             # Remove dimension of size 1
-#             e = K.squeeze(e, axis=-1)
-#             # Compute the weights
-#             alpha = K.softmax(e)
-#             # Reshape to tensorFlow format
-#             alpha = K.expand_dims(alpha, axis=-1)
-#             # Compute the context vector
-#             context = x * alpha
-#             context = K.sum(context, axis=1)
-#             return context
-#
-#     def create_LSTM_with_attention(hidden_units, dense_units):
-#         x = Input(shape=(x_train.shape[1:]))
-#         conv_x = keras.layers.Conv1D(30, 1, activation='relu')(x)
-#         attention_layer = attention()(conv_x)
-#         print(attention_layer.shape, attention_layer)
-#         dropout_lstm = keras.layers.Dropout(.2)(attention_layer)
-#         reshaped_attention = keras.layers.Reshape((30, 1), input_shape=(30,))(dropout_lstm)
-#         batchnorm_reshaped_attention = keras.layers.BatchNormalization()(reshaped_attention)
-#         lstm_layer = LSTM(100, return_sequences=True, activation='relu')(batchnorm_reshaped_attention)
-#         lstm_layer = LSTM(50, return_sequences=False, activation='relu')(lstm_layer)
-#         outputs = Dense(1, trainable=True, activation='tanh')(lstm_layer)
-#         model = Model(x, outputs)
-#         model.compile(loss='mse', optimizer='adam')
-#         return model
-#
-#         # Create the model with attention, train and evaluate
-#
-#     model_attention = create_LSTM_with_attention(hidden_units=100, dense_units=1)
-#
-#     model_attention.summary()
-#
-#     model_attention.fit(x_train, y_train, epochs=25, batch_size=32, verbose=2, validation_split=0.2)
-#
-#     preds = model_attention.predict(x_test)
-#
-#     plt.plot(y_test)
-#     plt.plot(preds)
-#     plt.savefig('myfig.png')
-#
-#     print("Saving model")
-#     keras_model_path = 'my_model'
-#     model_attention.save(keras_model_path)
-#     print("Model saved")
-
 # Predict next day closing price based on last 60 days
 @api_view(['POST'])
 def predict(request):
-    stockName = request.data["symbol"] + ".NS"
+    if request.data["us_stock"] == True:
+        stockName = request.data["symbol"]
+    else:
+        stockName = request.data["symbol"] + ".NS"
+    print("stock name is: ", stockName)
     df = yf.download(stockName, '2022-01-01', end=current_time.strftime('%Y-%m-%d'))
     column_names = ["Open", "Close"]
     df = df.reindex(columns=column_names)
@@ -223,16 +137,106 @@ def predict(request):
     scaled_df = np.reshape(scaled_df, (1, scaled_df.shape[0], scaled_df.shape[1]))
     print("scaled df post reshape shape is : ", scaled_df.shape)
 
-    model = tf.keras.models.load_model('my_new_model')
     pred = model.predict(scaled_df)
 
-    print("pred is: ", pred)
-
     pred_transform = inverse_scale_target(pred, min_var, max_var)
-
+    print("pred_transform is: ", pred_transform)
+    print("last closing price: ", df["Close"][-1])
     return Response({
-        'predicted_price': pred_transform
+        'predicted_price': pred_transform,
+        'last_closing_price' : df["Close"][-1]
     })
+
+@api_view(['POST'])
+def show_similar(request):
+    if request.data["us_stock"] == True:
+        stockName = request.data["symbol"]
+    else:
+        stockName = request.data["symbol"] + ".NS"
+    df = pdr.get_data_yahoo(stockName, start="1980-02-01", end=current_time.strftime('%Y-%m-%d'))
+    df.reset_index(inplace=True)
+    df['target'] = np.where(df['Open'].shift(-1) > df['Close'], 1, 0)
+    print(df.head(5))
+    target = df['target']
+
+    feature = df['Open']
+    samples_to_return = []
+    samples = []
+    sample_targets = []
+    for i in range(0, len(feature) - 15):
+        sample = feature[i:i + 15]
+        samples_to_return.append(df[i:i+15])
+        samples.append(sample)
+        sample_targets.append(target.iloc[i + 14])
+
+    samples_array = np.array(samples)
+    print("sample array example: ", samples_array[0])
+    print("samples_to_return array example: ", samples_to_return[0])
+
+    scaled_samples = []
+
+    for sample in samples:
+        max_in_sample = max(sample)
+        min_in_sample = min(sample)
+        buffer_sample = []
+        for data in sample:
+            buffer_data = (data - min_in_sample) / (max_in_sample - min_in_sample)
+            buffer_sample.append(buffer_data)
+        scaled_samples.append(buffer_sample)
+    print("scaled sample array examples:", scaled_samples[0])
+    print("count of scaled samples and targets", np.array(scaled_samples).shape, len(sample_targets))
+    sse = {}
+
+    target_seq = scaled_samples[-1]
+
+    for i in range(0, len(scaled_samples)):
+        sample = scaled_samples[i]
+        errors = np.subtract(sample, target_seq)
+        sse_val = 0
+        for j in range(0, len(errors)):
+            error = errors[j]
+            sse_val += j * 0.1 * error * error
+        sse[i] = sse_val
+
+    sorted_dict = dict(sorted(sse.items(), key=lambda item: item[1]))
+
+    counter = 0
+    targets = []
+    return_keys = []
+    for key in sorted_dict:
+        if counter < 4:
+            return_keys.append(key)
+            targets.append(sample_targets[key])
+        else:
+            break
+        counter += 1
+
+    print(targets)
+    print("Keys to return: ", return_keys)
+    targets_seq = pd.DataFrame(targets[1:])
+    counts = targets_seq.value_counts()
+
+    if counts[1] > counts[0]:
+        print("1 is the label")
+    else:
+        print("0 is the label")
+
+    return_targets = []
+
+    for sig in targets:
+        if sig == 1:
+            return_targets.append("BUY")
+        else:
+            return_targets.append("SELL")
+    print("Function execution is over.")
+    return Response({
+        'chart0': samples_to_return[return_keys[0]],
+        'chart1': samples_to_return[return_keys[1]],
+        'chart2': samples_to_return[return_keys[2]],
+        'chart3': samples_to_return[return_keys[3]],
+        'signals': return_targets
+    })
+
 
 
 # Get data for individual stock symbols
@@ -244,48 +248,95 @@ def getStockData(request):
     df_data = df50_with_dates
     return Response(df_data)
 
-#For signals page, to understand model prediction on given stock
+
+# For signals page, to understand model prediction on given stock
 @api_view(['POST'])
 def getModelData(request):
     stockName = request.data["symbol"] + ".NS"
     df = pdr.get_data_yahoo(stockName, start="1980-02-01", end=current_time.strftime('%Y-%m-%d'))
     print("df columns before switch: ", df.columns)
-    column_names = ["Open", "High", "Low", "Close", "Adj Close", "Volume"]
+    column_names = ["Open", "Close"]
     df = df.reindex(columns=column_names)
-    dataframe = df.reset_index()
-    data = df.filter(['Close'])
-    dataset = data.values
-    scaler = MinMaxScaler(feature_range=(0, 1))
-    scaled_data = scaler.fit_transform(dataset)
-    model = tf.keras.models.load_model('my_model')
+    dataframe = np.array(df[-170:])
+    print("dataframe is: ", dataframe, dataframe.shape)
+    batches_testing = []
+    targets_testing = []
 
-    df_for_testing = dataframe[-200:]
-    df_for_testing_scaled = scaled_data[-200:]
-    xtest = []
-    ytest = []
+    for i in range(30, dataframe.shape[0]):
+        buffer_array = list(dataframe[i - 30:i])
+        targets_testing.append(dataframe[i][0])
+        batches_testing.append(buffer_array)
 
-    for i in range(60, len(df_for_testing)):
-        xtest.append(df_for_testing_scaled[i - 60:i, 0])
-        ytest.append(df_for_testing_scaled[i, 0])
-    xtest, ytest = np.array(xtest), np.array(ytest)
-    xtest = np.reshape(xtest, (xtest.shape[0], xtest.shape[1], 1))
-    print("xtest shape: ", xtest.shape)
-    prediction_list = []
+    print("shape of testing and target training: ", np.array(batches_testing).shape, np.array(targets_testing).shape)
 
-    for i in xtest:
-        i = np.reshape(i, (1, 60, 1))
-        price = model.predict(i)
-        prediction_list.append(price)
+    # Define batch scaling function
+    scaled_testing_data = []
+    scaled_testing_targets = []
 
-    predicted_price_dataset = np.array(df_for_testing_scaled[-60:]).reshape(1, 60, 1)
-    predicted_price = model.predict(predicted_price_dataset)
-    predicted_price = scaler.inverse_transform(predicted_price)
-    prediction_list = np.array(prediction_list)
-    prediction_list = np.reshape(prediction_list, (prediction_list.shape[0], prediction_list.shape[1]))
-    prediction_list = scaler.inverse_transform(prediction_list)
-    test_values = df_for_testing['Close']
-    actual_values = test_values[60:]
-    actual_values = np.array(actual_values)
+    scaling_dict = {}
+
+    def inverse_scale_data(x, min_x, max_x):
+        orig_seq = []
+        for j in x:
+            buffer_array = []
+            for k in j:
+                orig_k = k * (max_x - min_x) + min_x
+                buffer_array.append(orig_k)
+            orig_seq.append(buffer_array)
+        return orig_seq
+
+    def inverse_scale_target(x, min_x, max_x):
+        orig_x = x * (max_x - min_x) + min_x
+        return orig_x
+
+    def scale(x, buffer_target, i):
+        seq_x = np.array(x)
+        max_x = np.amax(seq_x)
+        min_x = np.amin(seq_x)
+        scaling_dict[i] = (min_x, max_x)
+        new_seq = []
+        for j in seq_x:
+            buffer_seq = []
+            for k in j:
+                new_k = (k - min_x) / (max_x - min_x)
+                buffer_seq.append(new_k)
+            new_seq.append(buffer_seq)
+        scaled_target = (buffer_target - min_x) / (max_x - min_x)
+        return new_seq, scaled_target
+
+    for i in range(0, len(batches_testing)):
+        seq = batches_testing[i]
+        buffer_target = targets_testing[i]
+        new_seq, scaled_target = scale(seq, buffer_target, i)
+        scaled_testing_data.append(new_seq)
+        scaled_testing_targets.append(scaled_target)
+
+    print("shape of scaled testing and target", np.array(scaled_testing_data).shape,
+          np.array(scaled_testing_targets).shape)
+
+    print("Scaling dict len: ", len(scaling_dict.keys()))
+
+    x_test = np.array(scaled_testing_data)
+    y_test = np.array(scaled_testing_targets)
+
+    print(x_test.shape, y_test.shape)
+
+    prediction_list = model.predict(x_test)
+
+    transformed_prediction_list = []
+
+    for i in range(0, len(prediction_list)):
+        dict_values = list(scaling_dict[i])
+        or_seq = inverse_scale_target(prediction_list[i], dict_values[0], dict_values[1])
+        transformed_prediction_list.append(or_seq)
+
+    print("prediction shape", len(transformed_prediction_list), np.array(df["Open"][-140:]).shape)
+    #
+
+    prediction_list = transformed_prediction_list
+    actual_values = np.array(df["Open"][-140:])
+    print("shape of actual_values: ", actual_values.shape)
+
     actual_values_dict = dict()
     for index, value in enumerate(actual_values):
         actual_values_dict[index] = value
@@ -294,6 +345,7 @@ def getModelData(request):
         predicted_values_dict[index] = value
     ResponseDataframe = pd.DataFrame({'actual': actual_values_dict, 'predicted': predicted_values_dict})
     ResponseDataframe = ResponseDataframe.fillna('')
+    predicted_price = [10000]
     print("returning response", ResponseDataframe, predicted_price)
     return Response({
         'response': ResponseDataframe,

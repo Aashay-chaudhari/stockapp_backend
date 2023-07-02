@@ -11,5 +11,6 @@ urlpatterns = [
     path('predict/', views.predict),
     path('getModelData/', views.getModelData),
     path('trainModel/', views.trainModel_with_new_scaling),
+    path('show_similar/', views.show_similar),
 ]
 
