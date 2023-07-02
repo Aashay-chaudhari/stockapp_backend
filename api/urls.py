@@ -10,5 +10,6 @@ urlpatterns = [
     path('getStockData/', views.getStockData),
     path('predict/', views.predict),
     path('getModelData/', views.getModelData),
+    path('trainModel/', views.trainModel_with_new_scaling),
 ]
 

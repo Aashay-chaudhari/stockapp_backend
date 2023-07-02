@@ -33,96 +33,206 @@ yf.pdr_override()
 current_time = datetime.now()
 
 
-def trainModel():
+def trainModel_with_new_scaling(request):
     df = pdr.get_data_yahoo("^NSEI", start="1980-02-01", end=current_time.strftime('%Y-%m-%d'))
-    column_names = ["Open", "High", "Low", "Close", "Adj Close", "Volume"]
-    df = df.reindex(columns=column_names)
-    dataframe = df.reset_index()
-    data = df.filter(['Close'])
-    dataset = data.values
-    training_data_len = math.ceil(len(dataset) * .8)
-    scaler = MinMaxScaler(feature_range=(0, 1))
-    scaled_data = scaler.fit_transform(dataset)
-    train_data = scaled_data[0:training_data_len, :]
-    #Create training data
-    x_train = []
-    y_train = []
-    for i in range(60, len(train_data)):
-        x_train.append(train_data[i - 60:i, 0])
-        y_train.append(train_data[i, 0])
-    x_train, y_train = np.array(x_train), np.array(y_train)
-    x_train = np.reshape(x_train, (x_train.shape[0], x_train.shape[1], 1))
-    print(x_train.shape, y_train.shape)
+    feature = np.array(df[['Open', 'Close']])
 
-    #Create testing data
-    x_test = []
-    y_test = []
-    for i in range(60, len(train_data)):
-        x_test.append(train_data[i - 60:i, 0])
-        y_test.append(train_data[i, 0])
-    x_test, y_test = np.array(x_test), np.array(y_test)
-    x_test = np.reshape(x_test, (x_test.shape[0], x_test.shape[1], 1))
-    print(x_test.shape, y_test.shape)
-    # Describe model architecture
+    print(feature.shape)
 
-    class attention(Layer):
-        def __init__(self, **kwargs):
-            super(attention, self).__init__(**kwargs)
+    training_data_len = math.ceil(feature.shape[0] * 0.8)
+    print(training_data_len)
+    training_data = feature[:training_data_len]
+    testing_data = feature[training_data_len:]
+    print(training_data.shape, testing_data.shape)
+    batches_training = []
+    targets_training = []
 
-        def build(self, input_shape):
-            self.W = self.add_weight(name='attention_weight', shape=(input_shape[-1], 1),
-                                     initializer='random_normal', trainable=True)
-            self.b = self.add_weight(name='attention_bias', shape=(input_shape[1], 1),
-                                     initializer='zeros', trainable=True)
-            super(attention, self).build(input_shape)
+    for i in range(30, len(training_data)):
+        buffer_array = list(training_data[i - 30:i])
+        targets_training.append(training_data[i][0])
+        batches_training.append(buffer_array)
 
-        def call(self, x):
-            # Alignment scores. Pass them through tanh function
-            e = K.tanh(K.dot(x, self.W) + self.b)
-            # Remove dimension of size 1
-            e = K.squeeze(e, axis=-1)
-            # Compute the weights
-            alpha = K.softmax(e)
-            # Reshape to tensorFlow format
-            alpha = K.expand_dims(alpha, axis=-1)
-            # Compute the context vector
-            context = x * alpha
-            context = K.sum(context, axis=1)
-            return context
+    print(np.array(batches_training).shape, np.array(targets_training).shape)
 
-    def create_LSTM_with_attention(hidden_units, dense_units):
-        x = Input(shape=(x_train.shape[1:]))
-        conv_x = keras.layers.Conv1D(30, 1, activation='relu')(x)
-        attention_layer = attention()(conv_x)
-        print(attention_layer.shape, attention_layer)
-        dropout_lstm = keras.layers.Dropout(.2)(attention_layer)
-        reshaped_attention = keras.layers.Reshape((30, 1), input_shape=(30,))(dropout_lstm)
-        batchnorm_reshaped_attention = keras.layers.BatchNormalization()(reshaped_attention)
-        lstm_layer = LSTM(100, return_sequences=True, activation='relu')(batchnorm_reshaped_attention)
-        lstm_layer = LSTM(50, return_sequences=False, activation='relu')(lstm_layer)
-        outputs = Dense(1, trainable=True, activation='tanh')(lstm_layer)
-        model = Model(x, outputs)
-        model.compile(loss='mse', optimizer='adam')
-        return model
+    # Define batch scaling function
+    scaled_training_data = []
+    scaled_training_targets = []
 
-        # Create the model with attention, train and evaluate
+    def scale(x, buffer_target):
+        seq_x = np.array(x)
+        max_x = np.amax(seq_x)
+        min_x = np.amin(seq_x)
+        new_seq = []
+        for j in seq_x:
+            buffer_seq = []
+            for k in j:
+                new_k = (k - min_x) / (max_x - min_x)
+                buffer_seq.append(new_k)
+            new_seq.append(buffer_seq)
+        scaled_target = (buffer_target - min_x) / (max_x - min_x)
+        return new_seq, scaled_target
 
-    model_attention = create_LSTM_with_attention(hidden_units=100, dense_units=1)
+    for i in range(0, len(batches_training)):
+        seq = batches_training[i]
+        buffer_target = targets_training[i]
+        new_seq, scaled_target = scale(seq, buffer_target)
+        scaled_training_data.append(new_seq)
+        scaled_training_targets.append(scaled_target)
 
-    model_attention.summary()
+    x_train = np.array(scaled_training_data)
+    y_train = np.array(scaled_training_targets)
 
-    model_attention.fit(x_train, y_train, epochs=25, batch_size=32, verbose=2, validation_split=0.2)
+    model = Sequential()
+    model.add(LSTM(units=50, return_sequences=True))
+    model.add(LSTM(units=50, return_sequences=False))
+    model.add(Dense(units=25))
+    model.add(Dense(units=1))
 
-    preds = model_attention.predict(x_test)
-
-    plt.plot(y_test)
-    plt.plot(preds)
-    plt.savefig('myfig.png')
+    model.compile(optimizer='adam', loss='mean_squared_error')
+    ## epochs = 9
+    history = model.fit(x_train, y_train, batch_size=256, epochs=40, validation_split=0.2)
 
     print("Saving model")
-    keras_model_path = 'my_model'
-    model_attention.save(keras_model_path)
+    keras_model_path = 'my_new_model'
+    model.save(keras_model_path)
     print("Model saved")
+
+
+# #Trains the model on data, and saves the model in my_model
+# def trainModel():
+#     df = pdr.get_data_yahoo("^NSEI", start="1980-02-01", end=current_time.strftime('%Y-%m-%d'))
+#     column_names = ["Open", "High", "Low", "Close", "Adj Close", "Volume"]
+#     df = df.reindex(columns=column_names)
+#     dataframe = df.reset_index()
+#     data = df.filter(['Close'])
+#     dataset = data.values
+#     training_data_len = math.ceil(len(dataset) * .8)
+#     scaler = MinMaxScaler(feature_range=(0, 1))
+#     scaled_data = scaler.fit_transform(dataset)
+#     train_data = scaled_data[0:training_data_len, :]
+#     #Create training data
+#     x_train = []
+#     y_train = []
+#     for i in range(60, len(train_data)):
+#         x_train.append(train_data[i - 60:i, 0])
+#         y_train.append(train_data[i, 0])
+#     x_train, y_train = np.array(x_train), np.array(y_train)
+#     x_train = np.reshape(x_train, (x_train.shape[0], x_train.shape[1], 1))
+#     print(x_train.shape, y_train.shape)
+#
+#     #Create testing data
+#     x_test = []
+#     y_test = []
+#     for i in range(60, len(train_data)):
+#         x_test.append(train_data[i - 60:i, 0])
+#         y_test.append(train_data[i, 0])
+#     x_test, y_test = np.array(x_test), np.array(y_test)
+#     x_test = np.reshape(x_test, (x_test.shape[0], x_test.shape[1], 1))
+#     print(x_test.shape, y_test.shape)
+#     # Describe model architecture
+#
+#     class attention(Layer):
+#         def __init__(self, **kwargs):
+#             super(attention, self).__init__(**kwargs)
+#
+#         def build(self, input_shape):
+#             self.W = self.add_weight(name='attention_weight', shape=(input_shape[-1], 1),
+#                                      initializer='random_normal', trainable=True)
+#             self.b = self.add_weight(name='attention_bias', shape=(input_shape[1], 1),
+#                                      initializer='zeros', trainable=True)
+#             super(attention, self).build(input_shape)
+#
+#         def call(self, x):
+#             # Alignment scores. Pass them through tanh function
+#             e = K.tanh(K.dot(x, self.W) + self.b)
+#             # Remove dimension of size 1
+#             e = K.squeeze(e, axis=-1)
+#             # Compute the weights
+#             alpha = K.softmax(e)
+#             # Reshape to tensorFlow format
+#             alpha = K.expand_dims(alpha, axis=-1)
+#             # Compute the context vector
+#             context = x * alpha
+#             context = K.sum(context, axis=1)
+#             return context
+#
+#     def create_LSTM_with_attention(hidden_units, dense_units):
+#         x = Input(shape=(x_train.shape[1:]))
+#         conv_x = keras.layers.Conv1D(30, 1, activation='relu')(x)
+#         attention_layer = attention()(conv_x)
+#         print(attention_layer.shape, attention_layer)
+#         dropout_lstm = keras.layers.Dropout(.2)(attention_layer)
+#         reshaped_attention = keras.layers.Reshape((30, 1), input_shape=(30,))(dropout_lstm)
+#         batchnorm_reshaped_attention = keras.layers.BatchNormalization()(reshaped_attention)
+#         lstm_layer = LSTM(100, return_sequences=True, activation='relu')(batchnorm_reshaped_attention)
+#         lstm_layer = LSTM(50, return_sequences=False, activation='relu')(lstm_layer)
+#         outputs = Dense(1, trainable=True, activation='tanh')(lstm_layer)
+#         model = Model(x, outputs)
+#         model.compile(loss='mse', optimizer='adam')
+#         return model
+#
+#         # Create the model with attention, train and evaluate
+#
+#     model_attention = create_LSTM_with_attention(hidden_units=100, dense_units=1)
+#
+#     model_attention.summary()
+#
+#     model_attention.fit(x_train, y_train, epochs=25, batch_size=32, verbose=2, validation_split=0.2)
+#
+#     preds = model_attention.predict(x_test)
+#
+#     plt.plot(y_test)
+#     plt.plot(preds)
+#     plt.savefig('myfig.png')
+#
+#     print("Saving model")
+#     keras_model_path = 'my_model'
+#     model_attention.save(keras_model_path)
+#     print("Model saved")
+
+# Predict next day closing price based on last 60 days
+@api_view(['POST'])
+def predict(request):
+    stockName = request.data["symbol"] + ".NS"
+    df = yf.download(stockName, '2022-01-01', end=current_time.strftime('%Y-%m-%d'))
+    column_names = ["Open", "Close"]
+    df = df.reindex(columns=column_names)
+    df = df[-30:]
+    print("df is: ", df)
+
+    def inverse_scale_target(x, min_x, max_x):
+        orig_x = x * (max_x - min_x) + min_x
+        return orig_x
+
+    def scale(x, i):
+        seq_x = np.array(x)
+        max_x = np.amax(seq_x)
+        min_x = np.amin(seq_x)
+        new_seq = []
+        for j in seq_x:
+            buffer_seq = []
+            for k in j:
+                new_k = (k - min_x) / (max_x - min_x)
+                buffer_seq.append(new_k)
+            new_seq.append(buffer_seq)
+        return new_seq, min_x, max_x
+
+    scaled_df, min_var, max_var = scale(df, 0)
+    scaled_df = np.array(scaled_df)
+    print("scaled df shape is : ", scaled_df.shape)
+    scaled_df = np.reshape(scaled_df, (1, scaled_df.shape[0], scaled_df.shape[1]))
+    print("scaled df post reshape shape is : ", scaled_df.shape)
+
+    model = tf.keras.models.load_model('my_new_model')
+    pred = model.predict(scaled_df)
+
+    print("pred is: ", pred)
+
+    pred_transform = inverse_scale_target(pred, min_var, max_var)
+
+    return Response({
+        'predicted_price': pred_transform
+    })
 
 
 # Get data for individual stock symbols
@@ -134,30 +244,7 @@ def getStockData(request):
     df_data = df50_with_dates
     return Response(df_data)
 
-
-@api_view(['POST'])
-def predict(request):
-    stockName = request.data["symbol"] + ".NS"
-    df = yf.download(stockName, '2005-01-01', '2021-10-10')
-    column_names = ["Open", "High", "Low", "Close", "Adj Close", "Volume"]
-    df = df.reindex(columns=column_names)
-    df = df[-60:]
-    data = df.filter(['Close'])
-    dataset = data.values
-    scaler = MinMaxScaler(feature_range=(0, 1))
-    scaled_data = scaler.fit_transform(dataset)
-    model = tf.keras.models.load_model('my_model')
-
-    predicted_price_dataset = scaled_data
-    predicted_price_dataset = np.array(predicted_price_dataset).reshape(1, 60, 1)
-    predicted_price = model.predict(predicted_price_dataset)
-
-    predicted_price = scaler.inverse_transform(predicted_price)
-    return Response({
-        'predicted_price': predicted_price
-    })
-
-
+#For signals page, to understand model prediction on given stock
 @api_view(['POST'])
 def getModelData(request):
     stockName = request.data["symbol"] + ".NS"
