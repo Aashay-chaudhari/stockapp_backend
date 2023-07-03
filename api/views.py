@@ -153,12 +153,12 @@ def show_similar(request):
         stockName = request.data["symbol"]
     else:
         stockName = request.data["symbol"] + ".NS"
-    df = pdr.get_data_yahoo(stockName, start="1980-02-01", end=current_time.strftime('%Y-%m-%d'))
+    df = pdr.get_data_yahoo(stockName, start="2010-02-01", end=current_time.strftime('%Y-%m-%d'))
     df.reset_index(inplace=True)
     df['target'] = np.where(df['Open'].shift(-1) > df['Close'], 1, 0)
     print(df.head(5))
     target = df['target']
-
+    epsilon = 0.000000001
     feature = df['Open']
     samples_to_return = []
     samples = []
@@ -180,7 +180,7 @@ def show_similar(request):
         min_in_sample = min(sample)
         buffer_sample = []
         for data in sample:
-            buffer_data = (data - min_in_sample) / (max_in_sample - min_in_sample)
+            buffer_data = (data - min_in_sample) / (max_in_sample - min_in_sample + epsilon)
             buffer_sample.append(buffer_data)
         scaled_samples.append(buffer_sample)
     print("scaled sample array examples:", scaled_samples[0])
