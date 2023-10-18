@@ -98,7 +98,9 @@ def trainModel_with_new_scaling(request):
     keras_model_path = 'my_new_model'
     model.save(keras_model_path)
     print("Model saved")
-
+    return Response({
+        'predicted_price': ""
+    })
 
 # Predict next day closing price based on last 60 days
 @api_view(['POST'])
@@ -214,9 +216,20 @@ def show_similar(request):
     print(targets)
     print("Keys to return: ", return_keys)
     targets_seq = pd.DataFrame(targets[1:])
+    print("Targets seq is: ", targets_seq)
     counts = targets_seq.value_counts()
+    print("counts is : ", counts, type(counts), len(counts))
 
-    if counts[1] > counts[0]:
+    counts_list = dict(counts)
+
+    print("counts_list is: ", counts_list)
+    if (0,) not in counts_list:
+        counts_list[(0,)] = 0
+
+    if (1,) not in counts_list:
+        counts_list[(1,)] = 0
+
+    if counts_list[(1,)] > counts_list[(0,)]:
         print("1 is the label")
     else:
         print("0 is the label")
