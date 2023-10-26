@@ -1,14 +1,16 @@
 # Import libraries
-
+import time
 # Import utility libraries
 from datetime import datetime
 import math
+import random
 
 # Import django related libraries
 from rest_framework.response import Response
 from rest_framework.decorators import api_view
-from base.models import Stock, UserModel
-from base.serializers import StockSerializer, UserModelSerializer
+from base.models import Stock, UserModel, ActiveUser
+from base.serializers import StockSerializer, UserModelSerializer, ActiveUserSerializer
+from django.utils import timezone
 
 # Import Machine Learning Libraries
 import numpy as np
@@ -28,6 +30,8 @@ yf.pdr_override()
 current_time = datetime.now()
 model = tf.keras.models.load_model('my_new_model')
 print("Model is loaded in global")
+
+check_user_auth = True
 
 
 def trainModel_with_new_scaling(request):
@@ -97,9 +101,20 @@ def trainModel_with_new_scaling(request):
         'predicted_price': ""
     })
 
+
 # Predict next day closing price based on last 60 days
 @api_view(['POST'])
 def predict(request):
+    user_name = request.data["user_name"]
+    active_user = checkIfUserActive(user_name)
+    access_token = request.data["access_key"]
+    if active_user == False:
+        return Response("login required")
+    print("Passed active-user test.")
+    print("comparing keys: ", active_user.access_token , request.data["access_key"])
+    if active_user.access_token != request.data["access_key"]:
+        return Response("login required")
+    updateUserLastActive(user_name)
     if request.data["us_stock"] == True:
         stockName = request.data["symbol"]
     else:
@@ -141,8 +156,9 @@ def predict(request):
     print("last closing price: ", df["Close"][-1])
     return Response({
         'predicted_price': pred_transform,
-        'last_closing_price' : df["Close"][-1]
+        'last_closing_price': df["Close"][-1]
     })
+
 
 @api_view(['POST'])
 def show_similar(request):
@@ -162,7 +178,7 @@ def show_similar(request):
     sample_targets = []
     for i in range(0, len(feature) - 15):
         sample = feature[i:i + 15]
-        samples_to_return.append(df[i:i+15])
+        samples_to_return.append(df[i:i + 15])
         samples.append(sample)
         sample_targets.append(target.iloc[i + 14])
 
@@ -244,7 +260,6 @@ def show_similar(request):
         'chart3': samples_to_return[return_keys[3]],
         'signals': return_targets
     })
-
 
 
 # Get data for individual stock symbols
@@ -388,7 +403,7 @@ def addStock(request):
 
 @api_view(['POST'])
 def addUser(request):
-    print("Inside add user", request)
+    print("Inside add user", request.data)
     serializer = UserModelSerializer(data=request.data)
     print("serializer stored", serializer)
 
@@ -398,19 +413,47 @@ def addUser(request):
     else:
         print("info not valid")
         print(serializer.errors)
+        return Response("Email")
     return Response(serializer.data)
-
 
 @api_view(['POST'])
 def checkLogin(request):
     users = UserModel.objects.all()
     print(users, type(users))
     username = request.data["name"]
-    pass1 = request.data["password"]
+    password = request.data["password"]
     for user in users:
         print(user.email, user.password)
         if user.email == username:
-            if user.password == pass1:
-                return Response("Success")
+            if user.password == password:
+                access_token = str(random.randint(100000000000, 999999999999))
+                data = {'user_email': username, 'access_token': access_token, 'last_active': timezone.now()}
+                if ActiveUser.objects.filter(user_email=username).exists():
+                    updateUserLastActive(username)
+                    active_user = ActiveUser.objects.filter(user_email=username)[0]
+                    print("Inside user already active", active_user)
+
+                    return Response([str(active_user.access_token), username])
+                active_serializer = ActiveUserSerializer(data=data)
+                if active_serializer.is_valid():
+                    active_serializer.save()
+                ActiveUser.delete_inactive_users()
+                return Response([str(access_token), username])
 
     return Response("Failed")
+
+def checkIfUserActive(user_email):
+    ActiveUser.delete_inactive_users()
+    if ActiveUser.objects.filter(user_email=user_email).exists():
+        print("Returning active user object: ", ActiveUser.objects.get(user_email=user_email))
+        return ActiveUser.objects.get(user_email=user_email)
+    else:
+        return False
+
+
+def updateUserLastActive(user_email):
+        active_user = ActiveUser.objects.get(user_email=user_email)
+        active_user.last_active = timezone.now()
+        active_user.save()
+        return
+
