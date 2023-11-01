@@ -13,3 +13,6 @@ Version: 0.2.18
 
 To allow using venv: Set-ExecutionPolicy Unrestricted -Scope Process
 Activate the virtual env using the command : .\venv\Scripts\activate
+
+
+Superuser login: admin most used password

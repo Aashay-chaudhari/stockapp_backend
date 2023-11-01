@@ -1,16 +1,13 @@
 # Import libraries
-import time
 # Import utility libraries
 from datetime import datetime
 import math
-import random
 
 # Import django related libraries
 from rest_framework.response import Response
 from rest_framework.decorators import api_view
-from base.models import Stock, UserModel, ActiveUser
-from base.serializers import StockSerializer, UserModelSerializer, ActiveUserSerializer
-from django.utils import timezone
+from base.models import Stock, UserModel
+from base.serializers import StockSerializer, UserModelSerializer
 
 # Import Machine Learning Libraries
 import numpy as np
@@ -26,12 +23,21 @@ import yfinance as yf
 
 yf.pdr_override()
 
+# Import classes
+
+from base.helperClasses.userAuth import UserAuth
+from base.helperClasses.helper_func import HelperFunc
+
 # Global variables to be used in this file
+user_auth = UserAuth()
+
 current_time = datetime.now()
 model = tf.keras.models.load_model('my_new_model')
+new_model = tf.keras.models.load_model('neural_model/new_neural_model')
 print("Model is loaded in global")
 
 check_user_auth = True
+seq_len = 30
 
 
 def trainModel_with_new_scaling(request):
@@ -106,57 +112,19 @@ def trainModel_with_new_scaling(request):
 @api_view(['POST'])
 def predict(request):
     user_name = request.data["user_name"]
-    active_user = checkIfUserActive(user_name)
     access_token = request.data["access_key"]
-    if active_user == False:
+
+    if not UserAuth.check_if_user_active(user_name, access_token):
         return Response("login required")
-    print("Passed active-user test.")
-    print("comparing keys: ", active_user.access_token , request.data["access_key"])
-    if active_user.access_token != request.data["access_key"]:
-        return Response("login required")
-    updateUserLastActive(user_name)
-    if request.data["us_stock"] == True:
-        stockName = request.data["symbol"]
-    else:
-        stockName = request.data["symbol"] + ".NS"
-    print("stock name is: ", stockName)
-    df = yf.download(stockName, '2022-01-01', end=current_time.strftime('%Y-%m-%d'))
-    column_names = ["Open", "Close"]
-    df = df.reindex(columns=column_names)
-    df = df[-30:]
-    print("df is: ", df)
 
-    def inverse_scale_target(x, min_x, max_x):
-        orig_x = x * (max_x - min_x) + min_x
-        return orig_x
+    stock_name = HelperFunc.check_if_nse_stock(request)
 
-    def scale(x, i):
-        seq_x = np.array(x)
-        max_x = np.amax(seq_x)
-        min_x = np.amin(seq_x)
-        new_seq = []
-        for j in seq_x:
-            buffer_seq = []
-            for k in j:
-                new_k = (k - min_x) / (max_x - min_x)
-                buffer_seq.append(new_k)
-            new_seq.append(buffer_seq)
-        return new_seq, min_x, max_x
+    print("Calling Helper function predict")
+    prediction, last_close = HelperFunc.predict(stock_name, new_model)
 
-    scaled_df, min_var, max_var = scale(df, 0)
-    scaled_df = np.array(scaled_df)
-    print("scaled df shape is : ", scaled_df.shape)
-    scaled_df = np.reshape(scaled_df, (1, scaled_df.shape[0], scaled_df.shape[1]))
-    print("scaled df post reshape shape is : ", scaled_df.shape)
-
-    pred = model.predict(scaled_df)
-
-    pred_transform = inverse_scale_target(pred, min_var, max_var)
-    print("pred_transform is: ", pred_transform)
-    print("last closing price: ", df["Close"][-1])
     return Response({
-        'predicted_price': pred_transform,
-        'last_closing_price': df["Close"][-1]
+        'predicted_price': prediction,
+        'last_closing_price': last_close
     })
 
 
@@ -262,139 +230,55 @@ def show_similar(request):
     })
 
 
+# For signals page, to understand model prediction on given stock
+@api_view(['POST'])
+def get_model_data(request):
+    stock_name = HelperFunc.check_if_nse_stock(request)
+
+    predictions, actual_values, date_array = HelperFunc.get_model_results_for_stock(stock_name, new_model)
+    print("predictions, actual values", len(predictions), len(actual_values))
+    actual_values_dict = dict()
+    for index, value in enumerate(actual_values):
+        actual_values_dict[index] = value
+    predicted_values_dict = dict()
+    for index, value in enumerate(predictions):
+        predicted_values_dict[index] = value
+    dates_values_dict = dict()
+    for index, value in enumerate(date_array):
+        dates_values_dict[index] = value
+    response_dataframe = pd.DataFrame({'actual': actual_values_dict, 'predicted': predicted_values_dict, 'dates': dates_values_dict})
+
+    return Response({
+        'response': response_dataframe
+    })
+
+
 # Get data for individual stock symbols
 @api_view(['POST'])
-def getStockData(request):
-    stockName = request.data["symbol"] + ".NS"
-    df = pdr.get_data_yahoo(stockName, start="1980-02-01", end=current_time.strftime('%Y-%m-%d'))
+def get_stock_data(request):
+    stock_name = request.data["symbol"] + ".NS"
+    df = pdr.get_data_yahoo(stock_name, start="1980-02-01", end=current_time.strftime('%Y-%m-%d'))
     df50_with_dates = df.reset_index()
     df_data = df50_with_dates
     return Response(df_data)
 
 
-# For signals page, to understand model prediction on given stock
-@api_view(['POST'])
-def getModelData(request):
-    stockName = request.data["symbol"] + ".NS"
-    df = pdr.get_data_yahoo(stockName, start="1980-02-01", end=current_time.strftime('%Y-%m-%d'))
-    print("df columns before switch: ", df.columns)
-    column_names = ["Open", "Close"]
-    df = df.reindex(columns=column_names)
-    dataframe = np.array(df[-170:])
-    print("dataframe is: ", dataframe, dataframe.shape)
-    batches_testing = []
-    targets_testing = []
-
-    for i in range(30, dataframe.shape[0]):
-        buffer_array = list(dataframe[i - 30:i])
-        targets_testing.append(dataframe[i][0])
-        batches_testing.append(buffer_array)
-
-    print("shape of testing and target training: ", np.array(batches_testing).shape, np.array(targets_testing).shape)
-
-    # Define batch scaling function
-    scaled_testing_data = []
-    scaled_testing_targets = []
-
-    scaling_dict = {}
-
-    def inverse_scale_data(x, min_x, max_x):
-        orig_seq = []
-        for j in x:
-            buffer_array = []
-            for k in j:
-                orig_k = k * (max_x - min_x) + min_x
-                buffer_array.append(orig_k)
-            orig_seq.append(buffer_array)
-        return orig_seq
-
-    def inverse_scale_target(x, min_x, max_x):
-        orig_x = x * (max_x - min_x) + min_x
-        return orig_x
-
-    def scale(x, buffer_target, i):
-        seq_x = np.array(x)
-        max_x = np.amax(seq_x)
-        min_x = np.amin(seq_x)
-        scaling_dict[i] = (min_x, max_x)
-        new_seq = []
-        for j in seq_x:
-            buffer_seq = []
-            for k in j:
-                new_k = (k - min_x) / (max_x - min_x)
-                buffer_seq.append(new_k)
-            new_seq.append(buffer_seq)
-        scaled_target = (buffer_target - min_x) / (max_x - min_x)
-        return new_seq, scaled_target
-
-    for i in range(0, len(batches_testing)):
-        seq = batches_testing[i]
-        buffer_target = targets_testing[i]
-        new_seq, scaled_target = scale(seq, buffer_target, i)
-        scaled_testing_data.append(new_seq)
-        scaled_testing_targets.append(scaled_target)
-
-    print("shape of scaled testing and target", np.array(scaled_testing_data).shape,
-          np.array(scaled_testing_targets).shape)
-
-    print("Scaling dict len: ", len(scaling_dict.keys()))
-
-    x_test = np.array(scaled_testing_data)
-    y_test = np.array(scaled_testing_targets)
-
-    print(x_test.shape, y_test.shape)
-
-    prediction_list = model.predict(x_test)
-
-    transformed_prediction_list = []
-
-    for i in range(0, len(prediction_list)):
-        dict_values = list(scaling_dict[i])
-        or_seq = inverse_scale_target(prediction_list[i], dict_values[0], dict_values[1])
-        transformed_prediction_list.append(or_seq)
-
-    print("prediction shape", len(transformed_prediction_list), np.array(df["Open"][-140:]).shape)
-    #
-
-    prediction_list = transformed_prediction_list
-    actual_values = np.array(df["Open"][-140:])
-    print("shape of actual_values: ", actual_values.shape)
-
-    actual_values_dict = dict()
-    for index, value in enumerate(actual_values):
-        actual_values_dict[index] = value
-    predicted_values_dict = dict()
-    for index, value in enumerate(prediction_list):
-        predicted_values_dict[index] = value
-    ResponseDataframe = pd.DataFrame({'actual': actual_values_dict, 'predicted': predicted_values_dict})
-    ResponseDataframe = ResponseDataframe.fillna('')
-    predicted_price = [10000]
-    print("returning response", ResponseDataframe, predicted_price)
-    return Response({
-        'response': ResponseDataframe,
-        'predicted_price': predicted_price
-    })
-
-
 @api_view(['GET'])
-def getData(request):
+def get_data(request):
     stocks = Stock.objects.all()
     serializer = StockSerializer(stocks, many=True)
     return Response(serializer.data)
 
 
 @api_view(['GET'])
-def getUserData(request):
+def get_user_data(request):
     users = UserModel.objects.all()
     serializer = UserModelSerializer(users, many=True)
     return Response(serializer.data)
 
 
 @api_view(['POST'])
-def addStock(request):
-    print("Data is: ", request)
-    print("Data from req is: ", request.data)
-    print("Name is: ", request.data["name"])
+def add_stock(request):
     serializer = StockSerializer(data=request.data)
     if serializer.is_valid():
         serializer.save()
@@ -402,58 +286,16 @@ def addStock(request):
 
 
 @api_view(['POST'])
-def addUser(request):
-    print("Inside add user", request.data)
+def add_user(request):
     serializer = UserModelSerializer(data=request.data)
-    print("serializer stored", serializer)
-
     if serializer.is_valid():
         serializer.save()
-        print("user saved")
     else:
-        print("info not valid")
         print(serializer.errors)
         return Response("Email")
     return Response(serializer.data)
 
+
 @api_view(['POST'])
-def checkLogin(request):
-    users = UserModel.objects.all()
-    print(users, type(users))
-    username = request.data["name"]
-    password = request.data["password"]
-    for user in users:
-        print(user.email, user.password)
-        if user.email == username:
-            if user.password == password:
-                access_token = str(random.randint(100000000000, 999999999999))
-                data = {'user_email': username, 'access_token': access_token, 'last_active': timezone.now()}
-                if ActiveUser.objects.filter(user_email=username).exists():
-                    updateUserLastActive(username)
-                    active_user = ActiveUser.objects.filter(user_email=username)[0]
-                    print("Inside user already active", active_user)
-
-                    return Response([str(active_user.access_token), username])
-                active_serializer = ActiveUserSerializer(data=data)
-                if active_serializer.is_valid():
-                    active_serializer.save()
-                ActiveUser.delete_inactive_users()
-                return Response([str(access_token), username])
-
-    return Response("Failed")
-
-def checkIfUserActive(user_email):
-    ActiveUser.delete_inactive_users()
-    if ActiveUser.objects.filter(user_email=user_email).exists():
-        print("Returning active user object: ", ActiveUser.objects.get(user_email=user_email))
-        return ActiveUser.objects.get(user_email=user_email)
-    else:
-        return False
-
-
-def updateUserLastActive(user_email):
-        active_user = ActiveUser.objects.get(user_email=user_email)
-        active_user.last_active = timezone.now()
-        active_user.save()
-        return
-
+def check_login(request):
+    return Response(UserAuth.check_creds(request))
