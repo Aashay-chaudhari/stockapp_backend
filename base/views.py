@@ -2,6 +2,8 @@
 # Import utility libraries
 from datetime import datetime
 import math
+import os
+from django.conf import settings
 
 # Import django related libraries
 from rest_framework.response import Response
@@ -32,8 +34,11 @@ from base.helperClasses.helper_func import HelperFunc
 user_auth = UserAuth()
 
 current_time = datetime.now()
-model = tf.keras.models.load_model('my_new_model')
-new_model = tf.keras.models.load_model('neural_model/new_neural_model')
+# model = tf.keras.models.load_model('my_new_model')
+model_path = os.path.join(settings.BASE_DIR, 'base/model_store/models/model_001.h5')
+new_model = tf.keras.models.load_model(model_path)
+new_model.compile(optimizer='adam', loss='mean_squared_error', metrics=['accuracy'])
+
 print("Model is loaded in global")
 
 check_user_auth = True
@@ -100,7 +105,7 @@ def trainModel_with_new_scaling(request):
     history = model.fit(x_train, y_train, batch_size=256, epochs=40, validation_split=0.2)
 
     print("Saving model")
-    keras_model_path = 'my_new_model'
+    keras_model_path = 'model_001.h5'
     model.save(keras_model_path)
     print("Model saved")
     return Response({

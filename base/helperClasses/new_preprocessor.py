@@ -42,7 +42,7 @@ class DataImport:
 
 
 class TransformData:
-    def __init__(self, seq_len=30, cv=4):
+    def __init__(self, seq_len=30, cv=2):
         self.master_df = None
         self.seq_len = seq_len
         self.batches = None

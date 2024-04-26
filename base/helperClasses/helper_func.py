@@ -19,7 +19,7 @@ class HelperFunc:
         buffer_series = preprocessor.get_data_and_create_features(flag='predict')
         print("buffer_series is: ", buffer_series.shape, type(buffer_series))
         scaling_tuple, scaled_seq = preprocessor.transformData.get_scaled_series_for_prediction(
-            np.array(buffer_series[['Open', 'Close', 'EWMA10', 'EWMA5', 'diff', 'supertrend']]))
+            np.array(buffer_series[['Open', 'Close']]))
         print("scaling tuple, scaling seq: ", scaling_tuple, type(scaled_seq))
         reshaped_scaled_seq = np.reshape(scaled_seq, (1, scaled_seq.shape[0], scaled_seq.shape[1]))
         prediction = model.predict(reshaped_scaled_seq)
@@ -32,7 +32,7 @@ class HelperFunc:
         preprocessor = Preprocessor(stock=stock_name)
         buffer_series = preprocessor.get_data_and_create_features(flag='get_model_results')
         transform_data = TransformData()
-        batches, targets = transform_data.create_batches(np.array(buffer_series[['Open', 'Close', 'EWMA10', 'EWMA5', 'diff', 'supertrend']]))
+        batches, targets = transform_data.create_batches(np.array(buffer_series[['Open', 'Close']]))
         buffer_targets = targets.copy()
         _, _, x_test, y_test = transform_data.custom_scaling(0, 0, batches, targets, testing=True)
 
