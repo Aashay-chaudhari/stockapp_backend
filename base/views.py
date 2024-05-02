@@ -1,9 +1,11 @@
-# Import libraries
 # Import utility libraries
 from datetime import datetime
 import math
 import os
 from django.conf import settings
+import base.params as params
+import numpy as np
+import pandas as pd
 
 # Import django related libraries
 from rest_framework.response import Response
@@ -12,9 +14,6 @@ from base.models import Stock, UserModel
 from base.serializers import StockSerializer, UserModelSerializer
 
 # Import Machine Learning Libraries
-import numpy as np
-import pandas as pd
-
 from keras.models import Sequential
 from keras.layers import Dense, LSTM
 import tensorflow as tf
@@ -23,19 +22,21 @@ import tensorflow as tf
 from pandas_datareader import data as pdr
 import yfinance as yf
 
-yf.pdr_override()
 
 # Import classes
-
-from base.helperClasses.userAuth import UserAuth
+from base.helperClasses.user_auth import UserAuth
 from base.helperClasses.helper_func import HelperFunc
+from base.functions.train_model import train_model
 
 # Global variables to be used in this file
 user_auth = UserAuth()
 
+#Load model
 current_time = datetime.now()
+yf.pdr_override()
+
 # model = tf.keras.models.load_model('my_new_model')
-model_path = os.path.join(settings.BASE_DIR, 'base/model_store/models/model_001.h5')
+model_path = os.path.join(params.BASE_DIR_PATH, 'base/model_store/models/model_001.h5')
 new_model = tf.keras.models.load_model(model_path)
 new_model.compile(optimizer='adam', loss='mean_squared_error', metrics=['accuracy'])
 
@@ -46,70 +47,9 @@ seq_len = 30
 
 
 def trainModel_with_new_scaling(request):
-    df = pdr.get_data_yahoo("^NSEI", start="1980-02-01", end=current_time.strftime('%Y-%m-%d'))
-    feature = np.array(df[['Open', 'Close']])
-
-    print(feature.shape)
-
-    training_data_len = math.ceil(feature.shape[0] * 0.8)
-    print(training_data_len)
-    training_data = feature[:training_data_len]
-    testing_data = feature[training_data_len:]
-    print(training_data.shape, testing_data.shape)
-    batches_training = []
-    targets_training = []
-
-    for i in range(30, len(training_data)):
-        buffer_array = list(training_data[i - 30:i])
-        targets_training.append(training_data[i][0])
-        batches_training.append(buffer_array)
-
-    print(np.array(batches_training).shape, np.array(targets_training).shape)
-
-    # Define batch scaling function
-    scaled_training_data = []
-    scaled_training_targets = []
-
-    def scale(x, buffer_target):
-        seq_x = np.array(x)
-        max_x = np.amax(seq_x)
-        min_x = np.amin(seq_x)
-        new_seq = []
-        for j in seq_x:
-            buffer_seq = []
-            for k in j:
-                new_k = (k - min_x) / (max_x - min_x)
-                buffer_seq.append(new_k)
-            new_seq.append(buffer_seq)
-        scaled_target = (buffer_target - min_x) / (max_x - min_x)
-        return new_seq, scaled_target
-
-    for i in range(0, len(batches_training)):
-        seq = batches_training[i]
-        buffer_target = targets_training[i]
-        new_seq, scaled_target = scale(seq, buffer_target)
-        scaled_training_data.append(new_seq)
-        scaled_training_targets.append(scaled_target)
-
-    x_train = np.array(scaled_training_data)
-    y_train = np.array(scaled_training_targets)
-
-    model = Sequential()
-    model.add(LSTM(units=50, return_sequences=True))
-    model.add(LSTM(units=50, return_sequences=False))
-    model.add(Dense(units=25))
-    model.add(Dense(units=1))
-
-    model.compile(optimizer='adam', loss='mean_squared_error')
-    ## epochs = 9
-    history = model.fit(x_train, y_train, batch_size=256, epochs=40, validation_split=0.2)
-
-    print("Saving model")
-    keras_model_path = 'model_001.h5'
-    model.save(keras_model_path)
-    print("Model saved")
+    response = train_model()
     return Response({
-        'predicted_price': ""
+        'predicted_price': response
     })
 
 

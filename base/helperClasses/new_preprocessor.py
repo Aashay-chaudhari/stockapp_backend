@@ -92,9 +92,9 @@ class TransformData:
 
     def create_batches(self, df=None):
         if df is None:
-            buffer_df = self.master_df
+            buffer_df = np.array(self.master_df)
         else:
-            buffer_df = df
+            buffer_df = np.array(df)
 
         buffer_array_batch = []
         buffer_array_target = []
@@ -249,14 +249,14 @@ class TransformData:
         return buffer_prediction * (max_series - min_series) + min_series
 
 
-class Preprocessor:
+class Preprocessor(DataImport, TransformData):
     def __init__(self, stock='IBM', cv=4, seq_len=30):
-        self.dataImport = DataImport(stock)
-        self.transformData = TransformData(seq_len, cv)
+        DataImport.__init__(self, stock)
+        TransformData.__init__(self,seq_len, cv)
 
     def get_data_and_create_features(self, flag='default'):
         print("Inside preprocessor")
-        return self.dataImport.create_features(self.dataImport.get_data(flag=flag, seq_len=30))
+        return self.create_features(self.get_data(flag=flag, seq_len=30))
 
     def create_scaled_and_balanced_batches(self, df, show_sample_scale_example=True):
-        return self.transformData.transformation_workflow(df, show_sample_scale_example)
+        return self.transformation_workflow(df, show_sample_scale_example)
